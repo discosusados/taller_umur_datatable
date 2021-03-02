@@ -1,0 +1,301 @@
+---
+title: "Taller de `data.table`"
+author: "Antonio J. Perán"
+date: "10/3/2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+options(datatable.print.nrows = 10)
+library(data.table)
+```
+
+# ¿Qué es [`data.table`](https://rdatatable.gitlab.io/data.table/)?
+
+- Un paquete de R alojado en CRAN desde 2006 cuyos autores son Matt Dowle y Arun Srinivasan, aunque contribuyen a su desarrollo unas 70 personas.
+- Proporciona una mejora considerable al objeto base de R `data.frame` en tres aspectos: funcionalidad, velocidad de procesado y **gestión de memoria**. 
+- No depende de ningún otro paquete de R salvo la instalación base, lo que facilita su mantenimiento y desarrollo.
+- Como muchos otros paquetes, tiene [cheatsheet](https://raw.githubusercontent.com/rstudio/cheatsheets/master/datatable.pdf).
+
+
+# Leyendo y escribiendo
+
+## `fread` y `fwrite`
+
+```{r}
+# Ejemplo con grep: lee todas las filas del conjunto de datos salvo aquellas que tengan
+# la palabra JFK (aeropuerto de NYC)
+dt <- fread(input = "grep -v JFK ~/Documents/taller_umur_datatable/flights.csv")
+dt[, .N, origin]
+# Ejercicio: leer, con comando en cmd únicamente las primeras 10 filas del dataset flights
+# Ojo! La primera línea correspondería a la cabecera, de ahí que el argumento de head sea 11 y no 10.
+dt <- fread(input = "head -n 11 ~/Documents/taller_umur_datatable/flights.csv")
+```
+
+## Pasando de `data.frame` a `data.table`
+
+```{r}
+set.seed(543)
+df <- data.frame(sexo = rep(c("M", "F"), 5),  
+                 altura = rnorm(10, 1.65, 0.20),
+                 row.names = LETTERS[1:10])
+df
+
+# por referencia
+dt <- setDT(df)
+dt[3, sexo := "F"]
+df
+
+# copia completa
+dt <- as.data.table(df)
+dt
+dt <- as.data.table(df, keep.rownames =  T)
+dt
+```
+
+## `flights`
+
+El dataset que vamos utilizar en el taller es el dataset de `flights` que se puede encontrar [aquí](https://raw.githubusercontent.com/Rdatatable/data.table/master/vignettes/flights14.csv) y también en el repo. Este dataset es un registro de vuelos que partieron desde aeropuertos de Nueva York (JFK, LGA, EWR = Newark Liberty Airport) y que fueron efectuados a lo largo del año 2014.
+
+```{r}
+setwd("~/Documents/taller_umur_datatable/")
+dt <- fread("flights.csv")
+```
+
+# Primeros pasos
+
+## La filosofía DT[i, j, k]
+
+Dentro de los corchetes `[]` no se seleccionan únicamente filas y columnas, ocurren muchas más cosas. Las *queries* se organizan, generalmente en:
+
+- i: ¿En qué filas?
+- j: ¿Qué?
+- k: ¿Agrupado por?
+
+```{r}
+DT[i = ¿En qué filas?, j = ¿Qué?, k = ¿Agrupado por?]
+```
+
+## Lo básico
+
+### Filas, i
+
+- Obtén el subconjunto de todos los vuelos que partieron del aeropuerto "JFK" en junio.
+
+```{r}
+dt[origin == "JFK"]
+```
+
+- Obtén las 5 primeras filas del dataset.
+
+```{r}
+dt[1:5] # a diferencia de un data.frame, esto devuelve filas, no columnas!
+```
+
+- Ordena el conjunto de datos de manera que el retraso en la salida aparezca en orden ascendente, ¿y descendente? Los números negativos corresponden a vuelos que se han adelantado.
+
+```{r}
+# ascendente
+dt[order(dep_delay)]
+# descendente
+dt[order(-dep_delay)]
+```
+
+### Columnas
+
+- Seleccionamos la columna `origin` de dos formas distintas
+
+```{r}
+dt[, origin]
+dt[, .(origin)] # idéntico a dt[, list(arr_delay)]
+```
+
+- Seleccionamos varias columnas y renombramos la salida
+
+```{r}
+dt[, list(origin, dest)]
+dt[, .(origen = origin, destino = dest)]
+```
+
+- Seleccionamos columnas usando nombres como caracteres
+
+```{r}
+dt[, c("origin", "dest")]
+
+var.names <- c("origin", "dest")
+dt[, var.names, with =  F] # ¿Qué está pasando?
+dt[, ..var.names] # ¿Qué está pasando?
+```
+
+### Operando en j
+
+- ¿ Cómo calcularías el retraso total de cada vuelo? ¿Y el número de vuelos cuyo retraso total es negativo?
+
+```{r}
+dt[, .(total_delay = arr_delay + dep_delay)]
+dt[, .(total_delay = arr_delay + dep_delay)][, sum(total_delay < 0)]
+```
+
+### Subseteamos en i y calculamos en j
+
+- ¿Cuál es la media de retrasos tanto en la salida como en la llegada en vuelos que partieron el mes de junio desde el aeropuerto JFK?
+
+```{r}
+dt[origin == "JFK" & month == 6, .(mean_dep = mean(dep_delay),
+                                   mean_arr = mean(arr_delay))]
+```
+
+- ¿Cuántos vuelos se salieron desde el aeropuerto JFK en 2014?
+
+```{r}
+dt[origin == "JFK", .N]
+```
+
+### Agrupando por j
+
+- ¿Cuándo vuelos salieron de cada aeropuerto durante 2014? ¿Cuál fue su retraso medio tanto en la salida como en la llegada?
+
+```{r}
+dt[, .(mi_variable = .N), origin]
+```
+
+- ¿Y el mismo cálculo anterior únicamente para vuelos de la compañía AA?
+
+```{r}
+dt[carrier == "AA", .N, origin]
+```
+
+- ¿Y ordenando por aeropuerto de salida?
+
+```{r}
+dt[carrier == "AA", .N, origin][order(origin)]
+```
+
+- ¡¿Expresiones en k?!
+
+```{r}
+dt[, .N, .(dep_delay > 0, arr_delay > 0)]
+dt[, .(var1 = mean(dep_delay), var2 = mean(arr_delay)), .(dep_delay > 0, arr_delay> 0)]
+```
+
+### El objeto .SD
+
+- ¿Qué es?
+
+```{r}
+DT <- data.table(sexo = rep(c("M", "F"), 5),  
+                 altura = rnorm(10, 1.65, 0.20))
+DT[, print(.SD), by = sexo]
+```
+
+- Obtén la media de todas las variables numéricas de flights para cada aeropuerto de salida
+
+```{r}
+dt[, lapply(.SD, mean), by = origin, .SDcols = sapply(dt, is.numeric)]
+```
+
+- Obtén las dos primeras observaciones para cada uno de los meses
+
+```{r}
+dt[, head(.SD, 2), month]
+```
+
+
+# El operador :=
+
+Hasta ahora solo hemos ejecutado código que agrega el data.table y nos devuelve la agregación. Pero, ¿Cómo podemos modificar variables ya existentes en el data.table o añadir calcular nuevas?
+
+- Definiendo las variables `speed` y `total_delay` de dos formas distintas
+
+```{r}
+dt[, c("speed", "total_delay") := list(distance/air_time, arr_delay + dep_delay)]
+```
+
+- Corrigiendo la variable `hour`
+
+```{r}
+unique(dt$hour)
+dt[, unique(hour)] # sintaxis más propia de data.table
+dt[hour == 24, hour := 0]
+```
+
+- Definiendo la variable velocidad máxima por aeropuerto de salida
+
+```{r}
+dt[, max_speed := max(speed), origin]
+dt
+```
+
+- Definiendo las variables retraso máximo en salida y llegada en cada mes
+
+```{r}
+in_cols <- c("arr_delay", "dep_delay")
+out_cols <- c("max_arr_delay", "max_dep_delay")
+dt[, c("max_arr_delay", "max_dep_delay") := lapply(.SD, max), .SDcols = in_cols, by = month]
+```
+
+- Eliminando variables
+
+Ojo! la función c() es necesaria, data.table esperaría que out_cols fuese una variable del data.table.
+
+```{r}
+dt[, c(out_cols) := NULL] 
+```
+
+- La función `copy()`
+
+```{r}
+function(dt){
+  DT <- copy(dt)
+  ...
+  ...
+}
+```
+
+# Subseteando muuuuuy rápido
+
+## Keys primarias
+
+```{r}
+setkey(dt, origin, dest)
+key(dt)
+dt["JFK"]
+dt[.("JFK")]
+dt[.("JFK", "LAX")]
+# ¿y si queremos subsetear solo en dest?
+dt[.(unique(origin), "LAX")]
+# ¿y si sobreescribimos una key? El comportamiento esperado es que 
+# esta columna deje de ser key del data.table
+setkey(dt, hour)
+dt[.(24), hour := 0]
+key(dt)
+```
+
+## Keys secundarias o índices
+
+```{r}
+setindex(dt, month)
+indices(dt)
+dt[.(5)]
+dt[.(3), on = .(hour)]
+```
+
+## Keys secundarias con `==` y `%in%`
+
+```{r}
+dt[origin == "JFK"]
+dt[dest %in% c()]
+indices(dt)
+```
+
+
+
+
+
+
+
+
+
